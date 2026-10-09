@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "skills": {
+    "bithumb-account": {
+      "source": "bithumb-official/bithumb-ai-trade-kit",
+      "sourceType": "github",
+      "skillPath": "skills/bithumb-account/SKILL.md",
+      "computedHash": "6ffc7023471cd96c665e16159212398a1d6247243859a529d264d0b01ec8b103"
+    },
+    "bithumb-deposit": {
+      "source": "bithumb-official/bithumb-ai-trade-kit",
+      "sourceType": "github",
+      "skillPath": "skills/bithumb-deposit/SKILL.md",
+      "computedHash": "a87e83471045d3159df570cfa4b0a68349c48ba1884481a40da4c39a219da9fc"
+    },
+    "bithumb-market": {
+      "source": "bithumb-official/bithumb-ai-trade-kit",
+      "sourceType": "github",
+      "skillPath": "skills/bithumb-market/SKILL.md",
+      "computedHash": "e32f342faa1f355976208cbfcef8e5d70efb2ec679710178908e71ed87d9b382"
+    },
+    "bithumb-system": {
+      "source": "bithumb-official/bithumb-ai-trade-kit",
+      "sourceType": "github",
+      "skillPath": "skills/bithumb-system/SKILL.md",
+      "computedHash": "7983ea2d234ac34b2e73ce001137f8f4060c510eb39a840738c1c066f96dad8c"
+    },
+    "bithumb-trade": {
+      "source": "bithumb-official/bithumb-ai-trade-kit",
+      "sourceType": "github",
+      "skillPath": "skills/bithumb-trade/SKILL.md",
+      "computedHash": "94f01b24f1cdcc25cd2db33ac60ddd15ef832b36ec48bee32ccb584b023c1a79"
+    },
+    "bithumb-withdraw": {
+      "source": "bithumb-official/bithumb-ai-trade-kit",
+      "sourceType": "github",
+      "skillPath": "skills/bithumb-withdraw/SKILL.md",
+      "computedHash": "06b359d3e3b16eb234038d743f7cc98ca4522fedcdb037d7ff488bbe98fc126d"
+    }
+  }
+}

@@ -1,14 +1,24 @@
-# Bithumb MCP 설정
+# Bithumb MCP · CLI · Skill 설정
 
-이 저장소는 [Bithumb MCP 서버](https://github.com/bithumb-official/bithumb-ai-trade-kit/blob/main/setup-mcp.md)를 Claude Code에서 사용할 수 있도록 설정되어 있습니다.
+이 저장소는 [Bithumb MCP 서버](https://github.com/bithumb-official/bithumb-ai-trade-kit/blob/main/setup-mcp.md)와 [Bithumb CLI · Skill](https://github.com/bithumb-official/bithumb-ai-trade-kit/blob/main/setup-cli-skills.md)을 Claude Code에서 사용할 수 있도록 설정되어 있습니다.
 
 ## 구성 파일
 
 - `.mcp.json` — 프로젝트 루트에 위치한 Claude Code MCP 설정. `bithumb` 서버를 `npx @bithumb-official/bithumb-mcp`로 실행합니다.
+- `.claude/skills/bithumb-*` — 빗썸 Skill 6종(market, account, trade, deposit, withdraw, system). `npx skills add`로 프로젝트 범위에 복사 설치했습니다.
+- `skills-lock.json` — 설치된 Skill의 출처와 해시. `npx skills update -p`로 갱신합니다.
+- `.claude/hooks/session-start.sh` — Claude Code 클라우드 세션 시작 시 `bithumb` CLI가 없으면 `npm install -g @bithumb-official/bithumb-cli`로 설치합니다. 로컬에서는 실행되지 않습니다.
 
 ## 사전 요구사항
 
 - Node.js 18+ (`node -v`로 확인)
+- Bithumb CLI (로컬 환경): Skill이 내부적으로 `bithumb` 명령을 실행합니다.
+
+  ```bash
+  npm install -g @bithumb-official/bithumb-cli
+  bithumb --version
+  bithumb market ticker KRW-BTC   # 인증 없이 시세 조회로 동작 확인
+  ```
 
 ## API 키 설정
 
@@ -28,6 +38,8 @@ source ~/.zshrc
 [System.Environment]::SetEnvironmentVariable("BITHUMB_ACCESS_KEY", "your_access_key", "User")
 [System.Environment]::SetEnvironmentVariable("BITHUMB_SECRET_KEY", "your_secret_key", "User")
 ```
+
+키 동작 확인은 직접 실행하세요: `bithumb system diagnose`
 
 ## 사용
 
