@@ -23,6 +23,7 @@ if (!telegram.enabled) {
 const monitor = new Monitor(config, { telegram });
 const server = createServer({
   getSnapshot: () => monitor.publicSnapshot(),
+  getHealth: () => monitor.health(),
   publicDir: path.join(ROOT_DIR, 'public'),
 });
 

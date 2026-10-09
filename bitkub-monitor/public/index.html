@@ -217,6 +217,10 @@ footer p { margin: 4px 0; }
   .alerts li { grid-template-columns: 44px minmax(0, 1fr); }
   .alerts .px { grid-column: 2; text-align: left; }
 }
+@media (max-width: 360px) {
+  .hero .value { font-size: 36px; }
+  .value { font-size: 20px; }
+}
 </style>
 </head>
 <body>
@@ -254,12 +258,12 @@ footer p { margin: 4px 0; }
 
   <section class="kpis" aria-label="요약">
     <article class="tile hero">
-      <h2>BTC 김치 프리미엄</h2>
+      <h2 id="kBtcTitle">BTC 김치 프리미엄</h2>
       <p class="value" id="kBtc">-</p>
       <p class="note" id="kBtcNote"></p>
     </article>
     <article class="tile">
-      <h2>김프 중앙값</h2>
+      <h2 id="kMedianTitle">김프 중앙값</h2>
       <p class="value" id="kMedian">-</p>
       <p class="note" id="kMedianNote"></p>
     </article>
@@ -326,8 +330,8 @@ footer p { margin: 4px 0; }
 
   <footer>
     <p>김치 프리미엄 = Bithumb 원화 가격 ÷ (Bitkub THB 가격 × THB→KRW 환율) − 1. 은행 고시 기준은 하나은행 매매기준율, USDT 교차는 Bithumb USDT 원화 가격 ÷ Bitkub USDT 바트 가격입니다.</p>
-    <p>이상치: 김프 절댓값이 기준 이상인 코인입니다. 이름이 같은 다른 코인이거나 입출금이 막힌 경우가 많아 요약 통계에서 뺍니다. 저유동성: Bitkub 24시간 거래대금이 적어 마지막 체결가가 오래됐을 수 있습니다.</p>
-    <p>Bitkub 변동률은 최근 24시간, Bithumb 변동률은 전일 종가(한국 시간 0시) 대비입니다. 거래대금은 원화로 환산해 표시합니다.</p>
+    <p>이상치: 김프 절댓값이 기준 이상인 코인입니다. 이름이 같은 다른 코인이거나 입출금이 막힌 경우가 많아 요약 통계에서 뺍니다. 저유동성: 어느 한쪽 거래소의 24시간 거래대금이 적어 마지막 체결가가 오래됐을 수 있습니다. 거래정지: Bitkub에서 매수 또는 매도가 정지된 코인입니다. 둘 다 요약 통계에서 뺍니다.</p>
+    <p>Bitkub 변동률은 최근 24시간, Bithumb 변동률은 거래소가 제공하는 전일 종가 대비입니다. 거래대금은 원화로 환산해 표시합니다.</p>
   </footer>
 </div>
 <div class="tip" id="tip" role="tooltip" hidden></div>
@@ -373,9 +377,15 @@ footer p { margin: 4px 0; }
     if (a >= 1e4) return Math.round(v / 1e4).toLocaleString('en-US') + '만';
     return Math.round(v).toLocaleString('en-US');
   }
-  const fmtTime = (ts, seconds) => new Date(ts).toLocaleTimeString('ko-KR', {
-    hour: '2-digit', minute: '2-digit', second: seconds ? '2-digit' : undefined, hour12: false,
-  });
+  // 오늘이 아닌 시각에는 날짜를 붙여, 지난 주말의 환율·알림이 오늘 것으로 보이지 않게 한다.
+  const fmtTime = (ts, seconds) => {
+    const d = new Date(ts);
+    const sameDay = d.toDateString() === new Date().toDateString();
+    return d.toLocaleString('ko-KR', {
+      ...(sameDay ? {} : { month: 'numeric', day: 'numeric' }),
+      hour: '2-digit', minute: '2-digit', second: seconds ? '2-digit' : undefined, hour12: false,
+    });
+  };
   const dirClass = (v) => (v > 0 ? 'up' : v < 0 ? 'down' : '');
 
   // 이름 등 외부 데이터는 항상 텍스트 노드로 넣는다.
@@ -410,6 +420,10 @@ footer p { margin: 4px 0; }
   let snap = null;
   let lastOk = 0;
   let fetchFailed = false;
+  let clockOffset = 0; // 보는 쪽 시계 − 서버 시계
+  // USDT 교차 환율을 구할 수 없으면(두 거래소 USDT 시세 필요) 은행 고시로 돌아간다.
+  const usdtBasisActive = () => ui.basis === 'usdt' && snap != null && snap.usdtCrossRate > 0;
+  const basisSuffix = () => (usdtBasisActive() ? ' (USDT 교차)' : '');
 
   // ---- 분포 구간: -10% 미만, -10~-9, ..., 9~10, 10% 이상 ----
   const LO = -10;
@@ -423,9 +437,9 @@ footer p { margin: 4px 0; }
   // ---- 표 열 ----
   const COLUMNS = [
     { key: 'base', label: '코인', get: (d) => d.r.base },
-    { key: 'p', label: '김치 프리미엄', get: (d) => d.p },
+    { key: 'p', label: () => '김치 프리미엄' + basisSuffix(), get: (d) => d.p },
     { key: 'bk', label: 'Bitkub (THB)', get: (d) => d.r.bitkub.last },
-    { key: 'krw', label: 'Bitkub 원화 환산', get: (d) => d.krw },
+    { key: 'krw', label: () => 'Bitkub 원화 환산' + basisSuffix(), get: (d) => d.krw },
     { key: 'bh', label: 'Bithumb (KRW)', get: (d) => d.r.bithumb.last },
     { key: 'chgBk', label: 'Bitkub 24h', get: (d) => d.r.bitkub.changePct },
     { key: 'chgBh', label: 'Bithumb 전일 대비', get: (d) => d.r.bithumb.changePct },
@@ -436,7 +450,7 @@ footer p { margin: 4px 0; }
   // ---- 계산 ----
   function derive() {
     const bank = snap.fx ? snap.fx.rate : null;
-    const rate = ui.basis === 'usdt' ? snap.usdtCrossRate : bank;
+    const rate = usdtBasisActive() ? snap.usdtCrossRate : bank;
     const limit = snap.options.outlierPct;
     return snap.rows.map((r) => {
       const krw = rate ? r.bitkub.last * rate : null;
@@ -445,7 +459,8 @@ footer p { margin: 4px 0; }
       return {
         r, krw, p, volBk,
         outlier: p != null && Math.abs(p) >= limit,
-        minVol: Math.min(volBk ?? 0, r.bithumb.volumeKrw),
+        // 은행 환율이 없어 Bitkub 거래대금을 환산하지 못하면 Bithumb 쪽만으로 거른다.
+        minVol: volBk == null ? r.bithumb.volumeKrw : Math.min(volBk, r.bithumb.volumeKrw),
       };
     });
   }
@@ -473,13 +488,15 @@ footer p { margin: 4px 0; }
     const volOk = all.filter((d) => d.minVol >= ui.minVol);
     const outliers = volOk.filter((d) => d.outlier);
     const scope = ui.showOutliers ? volOk : volOk.filter((d) => !d.outlier);
-    const stats = scope.filter((d) => d.p != null && !d.outlier);
+    // 요약 통계는 서버(Telegram)와 같은 기준: 이상치·저유동성·거래정지 제외
+    const stats = scope.filter((d) => d.p != null && !d.outlier && !d.r.lowLiquidity && !d.r.halted);
 
     $('outlierCount').textContent = outliers.length;
+    buildHead();
     renderHeader();
     renderKpis(all, stats);
     renderHist(scope, stats);
-    renderTable(scope);
+    renderTable(scope, all);
     renderAlerts();
     renderBanner();
   }
@@ -494,6 +511,7 @@ footer p { margin: 4px 0; }
     }
     if (snap.usdtCrossRate) parts.push(`USDT 교차 ${snap.usdtCrossRate.toFixed(2)} KRW`);
     $('fxLine').textContent = parts.join(' · ');
+    $('basis').querySelector('[data-basis="bank"]').textContent = snap.fx ? snap.fx.sourceLabel : '은행 고시';
   }
 
   function setValue(el, p) {
@@ -504,6 +522,10 @@ footer p { margin: 4px 0; }
   }
 
   function renderKpis(all, stats) {
+    const sfx = basisSuffix();
+    $('kBtcTitle').textContent = 'BTC 김치 프리미엄' + sfx;
+    $('kMedianTitle').textContent = '김프 중앙값' + sfx;
+    $('histTitle').textContent = '김프 분포' + sfx;
     const btc = all.find((d) => d.r.base === 'BTC');
     setValue($('kBtc'), btc ? btc.p : null);
     $('kBtcNote').textContent = btc
@@ -511,14 +533,15 @@ footer p { margin: 4px 0; }
       : 'BTC가 두 거래소 공통 목록에 없습니다';
 
     setValue($('kMedian'), median(stats.map((d) => d.p)));
-    $('kMedianNote').textContent = `${stats.length}개 코인 기준 · 이상치 제외`;
+    $('kMedianNote').textContent = `${stats.length}개 코인 기준 · 이상치·저유동성·거래정지 제외`;
 
-    // USDT 프리미엄은 항상 은행 고시 환율 기준이다 (USDT 교차 기준에서는 정의상 0).
+    // USDT 프리미엄은 항상 THB→KRW 환율(은행 고시 등) 기준이다 (USDT 교차 기준에서는 정의상 0).
     const usdtRow = snap.rows.find((r) => r.base === 'USDT');
     setValue($('kUsdt'), usdtRow ? usdtRow.premiumPct : null);
-    $('kUsdtNote').textContent = ui.basis === 'usdt'
-      ? '은행 고시 기준. 현재 표는 이 값을 뺀 USDT 교차 기준입니다'
-      : '은행 고시 기준. 원화 자금 유입 강도를 보여줍니다';
+    const fxLabel = snap.fx ? snap.fx.sourceLabel : '환율';
+    $('kUsdtNote').textContent = usdtBasisActive()
+      ? `${fxLabel} 기준. 현재 표는 이 값을 뺀 USDT 교차 기준입니다`
+      : `${fxLabel} 기준. 원화 자금 유입 강도를 보여줍니다`;
 
     const above = stats.filter((d) => d.p > 0).length;
     const below = stats.filter((d) => d.p < 0).length;
@@ -598,7 +621,7 @@ footer p { margin: 4px 0; }
             buildHead();
             render();
           },
-        }, c.label));
+        }, typeof c.label === 'function' ? c.label() : c.label));
     }));
   }
 
@@ -613,13 +636,12 @@ footer p { margin: 4px 0; }
         h('i', { class: (p >= 0 ? 'pos' : 'neg') + (Math.abs(p) > SCALE ? ' over' : ''), style: `width:calc(${w.toFixed(2)}% - 1px)` })));
   }
 
-  function renderTable(scope) {
+  function renderTable(scope, all) {
     const q = ui.q.trim().toLowerCase();
+    const match = (d) => [d.r.base, d.r.nameKo, d.r.nameEn].some((s) => s && s.toLowerCase().includes(q));
     let rows = scope;
     if (ui.bin != null) rows = rows.filter((d) => d.p != null && binOf(d.p) === ui.bin);
-    if (q) {
-      rows = rows.filter((d) => [d.r.base, d.r.nameKo, d.r.nameEn].some((s) => s && s.toLowerCase().includes(q)));
-    }
+    if (q) rows = rows.filter(match);
     const col = COLUMNS.find((c) => c.key === ui.sort.key) || COLUMNS[0];
     rows = [...rows].sort((a, b) => {
       const va = col.get(a);
@@ -629,7 +651,8 @@ footer p { margin: 4px 0; }
       return (typeof va === 'string' ? va.localeCompare(vb) : va - vb) * ui.sort.dir;
     });
 
-    $('rowCount').textContent = `${rows.length}개 · 두 거래소 공통 ${snap.rows.length}개`;
+    const onlyCount = (snap.bitkubOnly || []).length;
+    $('rowCount').textContent = `${rows.length}개 · 두 거래소 공통 ${snap.rows.length}개${onlyCount ? ` · Bithumb에 없는 Bitkub 코인 ${onlyCount}개` : ''}`;
     const hiddenRows = ui.expanded ? 0 : Math.max(0, rows.length - ROW_LIMIT);
     $('moreWrap').hidden = rows.length <= ROW_LIMIT;
     $('moreBtn').textContent = hiddenRows ? `나머지 ${hiddenRows}개 더 보기` : '접기';
@@ -637,7 +660,7 @@ footer p { margin: 4px 0; }
     $('binChip').hidden = ui.bin == null;
     if (ui.bin != null) $('binChipText').textContent = `구간 ${BINS[ui.bin].label}`;
 
-    const lowLiq = `Bitkub 24시간 거래대금이 ฿${fmtPrice(snap.options.lowLiquidityThb)} 미만이라 마지막 체결가가 오래됐을 수 있습니다`;
+    const lowLiq = `24시간 거래대금이 Bitkub ฿${fmtPrice(snap.options.lowLiquidityThb)} 또는 Bithumb ₩${fmtPrice(snap.options.lowLiquidityKrw || 0)} 미만이라 마지막 체결가가 오래됐을 수 있습니다`;
     const body = rows.map((d) => {
       const r = d.r;
       return h('tr', null,
@@ -646,6 +669,7 @@ footer p { margin: 4px 0; }
           d.outlier ? h('span', { class: 'badge crit', title: '같은 티커의 다른 코인이거나 입출금 중단일 수 있습니다' }, '이상치') : null,
           r.warning ? h('span', { class: 'badge warn', title: `Bithumb 투자유의 (${r.warning})` }, '유의') : null,
           r.lowLiquidity ? h('span', { class: 'badge', title: lowLiq }, '저유동성') : null,
+          r.halted ? h('span', { class: 'badge crit', title: 'Bitkub에서 매수 또는 매도가 정지된 코인입니다. 마지막 체결가가 현재가와 다를 수 있습니다' }, '거래정지') : null,
           h('small', null, r.nameKo || r.nameEn || '')),
         h('td', null, premiumCell(d.p)),
         h('td', null, '฿' + fmtPrice(r.bitkub.last)),
@@ -656,7 +680,18 @@ footer p { margin: 4px 0; }
         h('td', { class: 'muted' }, d.volBk != null ? '₩' + fmtKrwC(d.volBk) : '-'),
         h('td', { class: 'muted' }, '₩' + fmtKrwC(r.bithumb.volumeKrw)));
     });
-    $('tbody').replaceChildren(...(body.length ? body : [h('tr', null, h('td', { class: 'empty', colspan: COLUMNS.length }, '조건에 맞는 코인이 없습니다'))]));
+    $('tbody').replaceChildren(...(body.length ? body : [h('tr', null, h('td', { class: 'empty', colspan: COLUMNS.length }, emptyText(q, match, all)))]));
+  }
+
+  // 검색 결과가 없을 때, 필터에 가려졌는지 비교 대상이 아닌지 알려 준다.
+  function emptyText(q, match, all) {
+    if (q) {
+      const hidden = all.filter(match).length;
+      if (hidden) return `${hidden}개가 이상치 또는 최소 거래대금 필터에 가려져 있습니다`;
+      const only = (snap.bitkubOnly || []).filter((b) => b.toLowerCase().includes(q));
+      if (only.length) return `${only.slice(0, 5).join(', ')}${only.length > 5 ? ' 외' : ''}: Bithumb에 KRW 마켓이 없어 비교 대상이 아닙니다`;
+    }
+    return '조건에 맞는 코인이 없습니다';
   }
 
   function renderAlerts() {
@@ -679,7 +714,7 @@ footer p { margin: 4px 0; }
         a.premiumPct != null ? h('small', null, `김프 ${fmtPct(a.premiumPct)}`) : null))));
   }
 
-  const SOURCE_NAMES = { bitkub: 'Bitkub 시세', bithumb: 'Bithumb 시세', bithumbMarkets: 'Bithumb 마켓 목록', fx: '환율' };
+  const SOURCE_NAMES = { bitkub: 'Bitkub 시세', bithumb: 'Bithumb 시세', bitkubSymbols: 'Bitkub 코인 목록', bithumbMarkets: 'Bithumb 마켓 목록', fx: '환율', telegram: 'Telegram 전송' };
   function renderBanner() {
     const lines = [];
     if (fetchFailed) lines.push('대시보드 서버에 연결할 수 없습니다. 마지막으로 받은 데이터를 보여주고 있습니다.');
@@ -688,7 +723,14 @@ footer p { margin: 4px 0; }
       const since = s.lastOkAt ? `마지막 성공 ${fmtTime(s.lastOkAt, true)}` : '아직 성공한 적 없음';
       lines.push(`${SOURCE_NAMES[key] || key} 갱신 실패 (${since}): ${s.error}`);
     }
-    if (!snap.fx) lines.push('환율 정보가 없어 원화 환산과 김프를 계산할 수 없습니다.');
+    if (!snap.fx) {
+      lines.push(usdtBasisActive()
+        ? '은행 고시 환율이 없어 원화 환산·Bitkub 거래대금·USDT 프리미엄을 계산할 수 없습니다. 김프는 USDT 교차 기준으로 표시 중입니다.'
+        : '환율 정보가 없어 원화 환산과 김프를 계산할 수 없습니다.');
+    }
+    if (ui.basis === 'usdt' && !usdtBasisActive()) {
+      lines.push('USDT 교차 환율을 구할 수 없어(두 거래소 USDT 시세 필요) 은행 고시 기준으로 표시 중입니다.');
+    }
     const banner = $('banner');
     banner.hidden = !lines.length;
     banner.replaceChildren(...lines.map((t) => h('p', null, t)));
@@ -701,7 +743,7 @@ footer p { margin: 4px 0; }
       $('liveText').textContent = fetchFailed ? '서버 연결 실패' : '첫 시세 수집 중';
       return;
     }
-    const age = Math.round((Date.now() - snap.updatedAt) / 1000);
+    const age = Math.max(0, Math.round((Date.now() - clockOffset - snap.updatedAt) / 1000));
     const stale = fetchFailed || age > Math.max(60, (snap.options.pollIntervalMs / 1000) * 4);
     live.classList.toggle('off', stale);
     $('liveText').textContent = `${fmtTime(snap.updatedAt, true)} 갱신 · ${age}초 전`;
@@ -717,6 +759,7 @@ footer p { margin: 4px 0; }
         throw new Error('HTTP ' + res.status);
       } else {
         snap = await res.json();
+        if (snap.serverNow) clockOffset = Date.now() - snap.serverNow;
         lastOk = Date.now();
         fetchFailed = false;
         render();

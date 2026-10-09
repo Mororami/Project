@@ -11,12 +11,27 @@ function thbWithKrw(thb, fx) {
   return `฿${formatPrice(thb)}${fx ? ` ≈ ₩${formatPrice(thb * fx.rate)}` : ''}`;
 }
 
-function fxLine(fx) {
-  return fx ? `환율 1 THB = ${fx.rate.toFixed(2)} KRW (${esc(fx.sourceLabel)})` : '환율 정보 없음 (원화 환산 생략)';
+/** 경과 시간: "45초 전", "4분 전", "3시간 전", "2일 전" */
+function formatAge(ms) {
+  if (ms < 3_600_000) return formatAgo(ms);
+  if (ms < 86_400_000) return `${Math.round(ms / 3_600_000)}시간 전`;
+  return `${Math.round(ms / 86_400_000)}일 전`;
+}
+
+/** 소스 갱신이 실패한 상태면 어느 때 값인지 덧붙인다. 정상이면 빈 문자열. */
+function staleNote(status, key, now) {
+  const s = status?.[key];
+  if (!s || s.ok !== false) return '';
+  return s.lastOkAt ? ` (갱신 실패, ${formatAge(now - s.lastOkAt)} 값)` : ' (갱신 실패)';
+}
+
+function fxLine(fx, status, now) {
+  if (!fx) return '환율 정보 없음 (원화 환산 생략)';
+  return `환율 1 THB = ${fx.rate.toFixed(2)} KRW (${esc(fx.sourceLabel)})${staleNote(status, 'fx', now)}`;
 }
 
 /** 같은 주기에 감지된 급등을 메시지 하나로 묶는다. */
-export function formatSurgeMessage(events, { tickers, rowsByBase, names, fx, now }) {
+export function formatSurgeMessage(events, { tickers, rowsByBase, names, fx, status = {}, now }) {
   const head = `<b>[급등 알림]${events.length > 1 ? ` ${events.length}종목` : ''}</b>`;
   const blocks = events.map((e) => {
     const row = rowsByBase.get(e.base);
@@ -34,21 +49,26 @@ export function formatSurgeMessage(events, { tickers, rowsByBase, names, fx, now
       lines.push(`24h ${formatPct(ticker.changePct)} · 거래대금 ${volume}`);
     }
     if (row) {
-      lines.push(`빗썸 ₩${formatPrice(row.bithumb.last)}${row.premiumPct != null ? ` · 김프 ${formatPct(row.premiumPct)}` : ''}`);
+      lines.push(
+        `빗썸 ₩${formatPrice(row.bithumb.last)}${row.premiumPct != null ? ` · 김프 ${formatPct(row.premiumPct)}` : ''}${staleNote(status, 'bithumb', now)}`,
+      );
     }
     return lines.join('\n');
   });
-  return [head, ...blocks].join('\n\n');
+  const footer = fx && status.fx?.ok === false ? [fxLine(fx, status, now)] : [];
+  return [head, ...blocks, ...footer].join('\n\n');
 }
 
 /** 정기 시세 메시지 */
-export function formatReport(snapshot, { tickers, symbols, names, title = '[시세] Bitkub' }) {
+export function formatReport(snapshot, { tickers, symbols, names, title = '[시세] Bitkub', status = {}, now = Date.now() }) {
   const { fx, summary } = snapshot;
   const rowsByBase = new Map(snapshot.rows.map((r) => [r.base, r]));
-  const header = [`<b>${esc(title)}</b>`, fxLine(fx)];
+  const header = [`<b>${esc(title)}</b>`];
+  if (status.bitkub?.ok === false) header.push(`경고: Bitkub 시세${staleNote(status, 'bitkub', now)}`);
+  header.push(fxLine(fx, status, now));
   if (summary.medianPct != null) {
     header.push(
-      `김프 중앙값 ${formatPct(summary.medianPct)} (저유동성 제외) · BTC ${formatPct(summary.btcPct)} · USDT ${formatPct(summary.usdtPct)}`,
+      `김프 중앙값 ${formatPct(summary.medianPct)} (이상치·저유동성 제외) · BTC ${formatPct(summary.btcPct)} · USDT ${formatPct(summary.usdtPct)}`,
     );
   }
 
@@ -59,7 +79,7 @@ export function formatReport(snapshot, { tickers, symbols, names, title = '[시�
     const second = [`24h ${formatPct(t.changePct)}`];
     if (row) {
       second.push(
-        `빗썸 ₩${formatPrice(row.bithumb.last)}${row.premiumPct != null ? ` (김프 ${formatPct(row.premiumPct)})` : ''}`,
+        `빗썸 ₩${formatPrice(row.bithumb.last)}${row.premiumPct != null ? ` (김프 ${formatPct(row.premiumPct)})` : ''}${staleNote(status, 'bithumb', now)}`,
       );
     }
     return `${coinTitle(base, row, names)} ${thbWithKrw(t.last, fx)}\n${second.join(' · ')}`;
@@ -68,8 +88,8 @@ export function formatReport(snapshot, { tickers, symbols, names, title = '[시�
   return [header.join('\n'), ...blocks].join('\n\n');
 }
 
-/** 시작 알림: 현재 적용 중인 설정을 요약한다. */
-export function formatStartMessage(config) {
+/** 시작 알림: 현재 적용 중인 설정과, 설정이 시세와 맞지 않는 점을 요약한다. */
+export function formatStartMessage(config, warnings = []) {
   const { surge, report } = config;
   const lines = ['<b>[시작] Bitkub 시세 모니터</b>'];
   if (surge.rules.length) {
@@ -85,5 +105,6 @@ export function formatStartMessage(config) {
       ? `정기 시세: ${report.intervalMin}분마다 ${esc(report.symbols.join(', '))}`
       : '정기 시세: 꺼짐',
   );
+  for (const w of warnings) lines.push(`경고: ${esc(w)}`);
   return lines.join('\n');
 }

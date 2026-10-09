@@ -44,8 +44,27 @@ test('값 해석과 검증', () => {
   assert.deepEqual(c.surge.rules, []);
   assert.equal(c.fx.fixedRate, 40.5);
   assert.equal(c.report.intervalMin, 0);
-  assert.throws(() => parseConfig({ POLL_INTERVAL_SEC: '1' }), /POLL_INTERVAL_SEC/);
+  assert.throws(() => parseConfig({ POLL_INTERVAL_SEC: '1' }), /POLL_INTERVAL_SEC 값이 올바르지 않습니다: "1" \(허용: 3 이상\)/);
   assert.throws(() => parseConfig({ FX_PROVIDERS: 'naver,google' }), /google/);
+  assert.throws(() => parseConfig({ FX_REFRESH_SEC: '5' }), /FX_REFRESH_SEC.*10 이상/);
+  assert.throws(() => parseConfig({ REPORT_INTERVAL_MIN: '43200' }), /REPORT_INTERVAL_MIN.*0~10080/);
+  assert.equal(parseConfig({}).market.lowLiquidityKrw, 4_000_000);
+});
+
+test('조회 간격보다 짧은 급등 구간은 설정 오류다', () => {
+  assert.throws(() => parseConfig({ SURGE_RULES: '10s:2,5m:3' }), /SURGE_RULES 구간은 조회 간격\(POLL_INTERVAL_SEC=15초\)보다 길어야 합니다: 10초 \+2%/);
+  assert.throws(() => parseConfig({ SURGE_RULES: '15s:2' }), /15초/);
+  assert.doesNotThrow(() => parseConfig({ SURGE_RULES: '16s:2' }));
+  assert.doesNotThrow(() => parseConfig({ SURGE_RULES: '10s:2', POLL_INTERVAL_SEC: '5' }));
+});
+
+test('심볼 표기를 정리하고 정기 시세 선택자를 검증한다', () => {
+  const c = parseConfig({ WATCHLIST: 'KRW-BTC, eth_thb ,xrp', REPORT_SYMBOLS: 'btc, top:20, all, common' });
+  assert.deepEqual(c.surge.watchlist, ['BTC', 'ETH', 'XRP']);
+  assert.deepEqual(c.report.symbols, ['BTC', 'TOP:20', 'ALL', 'COMMON']);
+  assert.throws(() => parseConfig({ REPORT_SYMBOLS: 'top:x' }), /REPORT_SYMBOLS 형식 오류: "TOP:X"/);
+  assert.throws(() => parseConfig({ REPORT_SYMBOLS: 'top:0' }), /REPORT_SYMBOLS 형식 오류/);
+  assert.throws(() => parseConfig({ WATCHLIST: 'BTC/THB' }), /WATCHLIST 형식 오류/);
 });
 
 test('.env 로더는 주석과 따옴표를 처리하고 기존 값을 덮어쓰지 않는다', () => {

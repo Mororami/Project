@@ -9,6 +9,9 @@ export const FX_PROVIDER_IDS = ['naver', 'yahoo', 'erapi'];
 
 const DEFAULT_SURGE_RULES = '5m:3,30m:7';
 const UNIT_MS = { s: 1000, m: 60_000, h: 3_600_000 };
+const SYMBOL = /^[A-Z0-9]+$/;
+// REPORT_SYMBOLS에서 코인 대신 쓸 수 있는 선택자: all(Bitkub THB 전체), common(빗썸에도 있는 코인), top:N(거래대금 상위 N)
+export const REPORT_SELECTOR = /^(ALL|COMMON|TOP:[1-9]\d*)$/;
 
 /** .env 파일을 읽어 env에 채운다. 이미 설정된 값은 덮어쓰지 않는다. */
 export function loadDotEnv(file = path.join(ROOT_DIR, '.env'), env = process.env) {
@@ -48,12 +51,22 @@ export function parseSurgeRules(text) {
   return rules.sort((a, b) => a.windowMs - b.windowMs);
 }
 
+/** "krw-btc", "BTC_THB", " btc " → "BTC" */
+export function normalizeSymbol(text) {
+  return String(text).trim().toUpperCase().replace(/^KRW-/, '').replace(/[_-]THB$/, '');
+}
+
 function readNumber(env, key, fallback, { min = -Infinity, max = Infinity } = {}) {
   const raw = env[key];
   if (raw === undefined || String(raw).trim() === '') return fallback;
   const n = Number(raw);
   if (!Number.isFinite(n) || n < min || n > max) {
-    throw new Error(`${key} 값이 올바르지 않습니다: "${raw}"`);
+    const range =
+      min !== -Infinity && max !== Infinity ? `${min}~${max}`
+      : min !== -Infinity ? `${min} 이상`
+      : max !== Infinity ? `${max} 이하`
+      : '숫자';
+    throw new Error(`${key} 값이 올바르지 않습니다: "${raw}" (허용: ${range})`);
   }
   return n;
 }
@@ -65,7 +78,7 @@ function readList(env, key, fallback = []) {
 }
 
 export function parseConfig(env = process.env) {
-  const symbols = (key, fallback) => readList(env, key, fallback).map((s) => s.toUpperCase());
+  const symbols = (key, fallback) => readList(env, key, fallback).map(normalizeSymbol);
 
   const fxProviders = readList(env, 'FX_PROVIDERS', FX_PROVIDER_IDS).map((s) => s.toLowerCase());
   for (const id of fxProviders) {
@@ -74,7 +87,28 @@ export function parseConfig(env = process.env) {
     }
   }
 
+  const pollIntervalMs = readNumber(env, 'POLL_INTERVAL_SEC', 15, { min: 3 }) * 1000;
+
   const surgeText = String(env.SURGE_RULES ?? '').trim();
+  const rules = /^off$/i.test(surgeText) ? [] : parseSurgeRules(surgeText || DEFAULT_SURGE_RULES);
+  // 조회 간격보다 짧거나 같은 구간은 비교할 이전 가격이 없어 절대 맞지 않는다.
+  const dead = rules.filter((r) => r.windowMs <= pollIntervalMs);
+  if (dead.length) {
+    throw new Error(
+      `SURGE_RULES 구간은 조회 간격(POLL_INTERVAL_SEC=${pollIntervalMs / 1000}초)보다 길어야 합니다: ${dead.map((r) => `${r.label} +${r.pct}%`).join(', ')}`,
+    );
+  }
+
+  const watchlist = symbols('WATCHLIST', []);
+  for (const s of watchlist) {
+    if (!SYMBOL.test(s)) throw new Error(`WATCHLIST 형식 오류: "${s}" (예: BTC,ETH)`);
+  }
+  const reportSymbols = symbols('REPORT_SYMBOLS', ['BTC', 'ETH', 'XRP', 'SOL', 'DOGE', 'USDT']);
+  for (const s of reportSymbols) {
+    if (!SYMBOL.test(s) && !REPORT_SELECTOR.test(s)) {
+      throw new Error(`REPORT_SYMBOLS 형식 오류: "${s}" (예: BTC,ETH 또는 all, common, top:20)`);
+    }
+  }
 
   return {
     telegram: {
@@ -82,25 +116,27 @@ export function parseConfig(env = process.env) {
       chatIds: readList(env, 'TELEGRAM_CHAT_ID'),
       apiBase: String(env.TELEGRAM_API_BASE || 'https://api.telegram.org').replace(/\/+$/, ''),
     },
-    pollIntervalMs: readNumber(env, 'POLL_INTERVAL_SEC', 15, { min: 3 }) * 1000,
+    pollIntervalMs,
     fx: {
       refreshMs: readNumber(env, 'FX_REFRESH_SEC', 60, { min: 10 }) * 1000,
       providers: fxProviders,
       fixedRate: readNumber(env, 'FX_THB_KRW', null, { min: 0.0001 }),
     },
     surge: {
-      rules: /^off$/i.test(surgeText) ? [] : parseSurgeRules(surgeText || DEFAULT_SURGE_RULES),
+      rules,
       cooldownMs: readNumber(env, 'SURGE_COOLDOWN_MIN', 30, { min: 0 }) * 60_000,
       minVolumeThb: readNumber(env, 'SURGE_MIN_VOLUME_THB', 500_000, { min: 0 }),
-      watchlist: symbols('WATCHLIST', []),
+      watchlist,
     },
     report: {
-      intervalMin: readNumber(env, 'REPORT_INTERVAL_MIN', 60, { min: 0 }),
-      symbols: symbols('REPORT_SYMBOLS', ['BTC', 'ETH', 'XRP', 'SOL', 'DOGE', 'USDT']),
+      // 1주(10080분)를 넘는 간격은 타이머 한도와 쓸모를 생각해 막는다.
+      intervalMin: readNumber(env, 'REPORT_INTERVAL_MIN', 60, { min: 0, max: 10080 }),
+      symbols: reportSymbols,
     },
     market: {
       outlierPct: readNumber(env, 'OUTLIER_PCT', 30, { min: 1 }),
       lowLiquidityThb: readNumber(env, 'LOW_LIQUIDITY_THB', 100_000, { min: 0 }),
+      lowLiquidityKrw: readNumber(env, 'LOW_LIQUIDITY_KRW', 4_000_000, { min: 0 }),
     },
     server: {
       host: String(env.DASHBOARD_HOST ?? '').trim() || '127.0.0.1',

@@ -22,7 +22,7 @@ try {
   console.log(`봇: @${me.username}`);
   if (!chats.size) {
     console.log(`@${me.username}에게 아무 메시지나 보낸 뒤 다시 실행하세요.`);
-    console.log('그룹에서 받으려면 봇을 그룹에 초대하고 그룹에 메시지를 하나 남기세요.');
+    console.log('그룹에서 받으려면 봇을 그룹에 초대한 직후 실행하거나, 그룹에서 /start 를 보낸 뒤 다시 실행하세요 (봇은 기본 설정에서 그룹의 일반 메시지를 받지 못합니다).');
     process.exit(0);
   }
   console.log('최근 메시지를 보낸 채팅방:');

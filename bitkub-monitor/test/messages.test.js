@@ -52,7 +52,7 @@ test('정기 시세 메시지', () => {
   const tickers = new Map([['BTC', { last: 2_500_000, changePct: -0.5, volumeThb: 1 }]]);
   const text = formatReport(snap, { tickers, symbols: ['BTC', 'NOPE'] });
   assert.match(text, /환율 1 THB = 40\.00 KRW \(하나은행 고시\)/);
-  assert.match(text, /김프 중앙값 \+1\.20%/);
+  assert.match(text, /김프 중앙값 \+1\.20% \(이상치·저유동성 제외\)/);
   assert.match(text, /<b>BTC<\/b> 비트코인 ฿2,500,000 ≈ ₩100,000,000\n24h -0\.50% · 빗썸 ₩101,500,000 \(김프 \+1\.50%\)/);
   assert.match(text, /<b>NOPE<\/b> Bitkub THB 마켓에 없음/);
 });
@@ -71,4 +71,34 @@ test('긴 메시지는 블록 경계에서 나눈다', () => {
   assert.equal(parts[0], `${block}\n\n${block}`);
   assert.ok(parts.every((p) => p.length <= 4000));
   assert.deepEqual(splitMessage('short'), ['short']);
+});
+
+test('갱신이 실패한 소스의 값에는 언제 값인지 붙인다', () => {
+  const now = 100 * 86_400_000;
+  const status = { bithumb: { ok: false, lastOkAt: now - 12 * 60_000, error: 'x' }, fx: { ok: false, lastOkAt: now - 3 * 86_400_000, error: 'y' }, bitkub: { ok: false, lastOkAt: null, error: 'z' } };
+  const snap = {
+    fx,
+    summary: { medianPct: null },
+    rows: [{ base: 'BTC', nameKo: '비트코인', bithumb: { last: 101_500_000 }, premiumPct: 1.5 }],
+  };
+  const tickers = new Map([['BTC', { last: 2_500_000, changePct: 0, volumeThb: 1 }]]);
+  const report = formatReport(snap, { tickers, symbols: ['BTC'], status, now });
+  assert.match(report, /경고: Bitkub 시세 \(갱신 실패\)/);
+  assert.match(report, /환율 1 THB = 40\.00 KRW \(하나은행 고시\) \(갱신 실패, 3일 전 값\)/);
+  assert.match(report, /빗썸 ₩101,500,000 \(김프 \+1\.50%\) \(갱신 실패, 12분 전 값\)/);
+
+  const [rule] = parseSurgeRules('5m:3');
+  const events = [{ base: 'BTC', price: 2_600_000, t: now, repeat: false, hits: [{ rule, low: { p: 2_500_000, t: now - 60_000 }, risePct: 4 }] }];
+  const surge = formatSurgeMessage(events, { tickers, rowsByBase: new Map(snap.rows.map((r) => [r.base, r])), fx, status, now });
+  assert.match(surge, /빗썸 ₩101,500,000 · 김프 \+1\.50% \(갱신 실패, 12분 전 값\)/);
+  assert.match(surge, /\n\n환율 1 THB = 40\.00 KRW \(하나은행 고시\) \(갱신 실패, 3일 전 값\)$/);
+
+  // 정상이면 아무것도 붙지 않는다.
+  const fine = formatReport(snap, { tickers, symbols: ['BTC'], status: { bithumb: { ok: true }, fx: { ok: true } }, now });
+  assert.doesNotMatch(fine, /갱신 실패/);
+});
+
+test('시작 메시지는 경고를 덧붙인다', () => {
+  const text = formatStartMessage(parseConfig({}), ['Bitkub THB 마켓에 없는 심볼: <X>']);
+  assert.match(text, /경고: Bitkub THB 마켓에 없는 심볼: &lt;X&gt;/);
 });

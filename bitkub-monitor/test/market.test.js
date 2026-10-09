@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildSnapshot, median, premiumPct } from '../src/market.js';
 
-const options = { outlierPct: 30, lowLiquidityThb: 100_000 };
+const options = { outlierPct: 30, lowLiquidityThb: 100_000, lowLiquidityKrw: 4_000_000 };
 
 function snapshot(fx = { rate: 40, at: 0, source: 'test', sourceLabel: 'test' }) {
   const bitkub = new Map([
@@ -11,20 +11,27 @@ function snapshot(fx = { rate: 40, at: 0, source: 'test', sourceLabel: 'test' })
     ['XYZ', { last: 10, changePct: 0, volumeThb: 1_000 }],
     ['BLAST', { last: 0.001, changePct: 0, volumeThb: 2_000_000 }],
     ['ONLYBK', { last: 5, changePct: 0, volumeThb: 2_000_000 }],
+    ['HALT', { last: 2, changePct: 0, volumeThb: 5_000_000 }],
+    ['DEAD', { last: 1, changePct: 0, volumeThb: 5_000_000 }],
   ]);
   const bithumb = new Map([
     ['BTC', { last: 101_000_000, changePct: 0.5, volumeKrw: 5e10 }],
     ['USDT', { last: 1_340, changePct: 0, volumeKrw: 1e11 }],
     ['XYZ', { last: 396, changePct: 0, volumeKrw: 1e6 }],
     ['BLAST', { last: 0.3, changePct: 0, volumeKrw: 1e8 }],
+    ['HALT', { last: 80.8, changePct: 0, volumeKrw: 9e7 }],
+    // Bithumb 쪽 거래가 없는 마켓: 체결가가 며칠 전 값일 수 있다
+    ['DEAD', { last: 48, changePct: 0, volumeKrw: 0 }],
   ]);
   const bithumbMarkets = new Map([
     ['BTC', { nameKo: '비트코인', nameEn: 'Bitcoin', warning: null }],
     ['USDT', { nameKo: '테더', nameEn: 'Tether', warning: null }],
     ['XYZ', { nameKo: null, nameEn: null, warning: 'CAUTION' }],
     ['BLAST', { nameKo: '블라스트', nameEn: 'Blast', warning: null }],
+    ['HALT', { nameKo: '정지', nameEn: 'Halt', warning: null }],
+    ['DEAD', { nameKo: '데드', nameEn: 'Dead', warning: null }],
   ]);
-  const bitkubSymbols = new Map([['XYZ', { name: 'Xyz Token' }]]);
+  const bitkubSymbols = new Map([['XYZ', { name: 'Xyz Token' }], ['HALT', { name: 'Halt', halted: true }]]);
   return buildSnapshot({ bitkub, bithumb, bitkubSymbols, bithumbMarkets, fx, options, now: 1 });
 }
 
@@ -36,7 +43,9 @@ test('김프 계산식', () => {
 
 test('두 거래소 모두에 있는 코인만 비교하고 Bithumb 거래대금 순으로 정렬한다', () => {
   const snap = snapshot();
-  assert.deepEqual(snap.rows.map((r) => r.base), ['USDT', 'BTC', 'BLAST', 'XYZ']);
+  assert.deepEqual(snap.rows.map((r) => r.base), ['USDT', 'BTC', 'BLAST', 'HALT', 'XYZ', 'DEAD']);
+  assert.equal(snap.bitkubCount, 7);
+  assert.deepEqual(snap.bitkubOnly, ['ONLYBK']);
   const btc = snap.rows.find((r) => r.base === 'BTC');
   assert.equal(btc.krwFromThb, 100_000_000);
   assert.ok(Math.abs(btc.premiumPct - 1) < 1e-9);
@@ -50,8 +59,15 @@ test('이상치와 저유동성을 표시하고 요약 통계에서 뺀다', () 
   assert.equal(byBase.XYZ.lowLiquidity, true);
   assert.equal(byBase.XYZ.warning, 'CAUTION');
   assert.equal(byBase.XYZ.nameEn, 'Xyz Token');
+  // Bithumb 거래대금이 적어도 저유동성이다.
+  assert.equal(byBase.DEAD.lowLiquidity, true);
+  assert.equal(byBase.DEAD.outlier, false);
+  // Bitkub 거래 정지 코인은 표시하고 요약에서 뺀다.
+  assert.equal(byBase.HALT.halted, true);
+  assert.ok(Math.abs(byBase.HALT.premiumPct - 1) < 1e-9);
+  assert.equal(byBase.BTC.halted, false);
   assert.equal(snap.summary.outliers, 1);
-  // BTC(+1%)와 USDT(1340 ÷ 1320 − 1 ≈ +1.52%)만 남는다.
+  // BTC(+1%)와 USDT(1340 ÷ 1320 − 1 ≈ +1.52%)만 남는다. DEAD(+20%)와 HALT(+1%)는 뺀다.
   assert.equal(snap.summary.used, 2);
   const usdtPct = (1340 / (33 * 40) - 1) * 100;
   assert.ok(Math.abs(snap.summary.medianPct - (1 + usdtPct) / 2) < 1e-9);

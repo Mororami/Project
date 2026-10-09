@@ -21,9 +21,10 @@ if (!monitor.bitkub.size) {
 
 const message = formatReport(monitor.snapshot, {
   tickers: monitor.bitkub,
-  symbols: config.report.symbols,
+  symbols: monitor.reportSymbols(),
   names: monitor.bitkubSymbols,
   title: '[테스트] Bitkub 시세 모니터 연결 확인',
+  status: monitor.status,
 });
 try {
   await telegram.send(message);

@@ -79,3 +79,55 @@ test('prune은 시세가 끊긴 코인의 기록을 지운다', () => {
   assert.equal(d.history.has('OLD'), false);
   assert.equal(d.history.has('NEW'), true);
 });
+
+test('대기 시간이 지나도 저점이 직전 알림 이전 그대로면(같은 상승의 연장) 더 올라야 알린다', () => {
+  // 규칙 구간(1시간)보다 짧은 대기 시간(30분). 100 → 108 뒤 가격이 그대로다.
+  const d = detector('5m:3,1h:7', 30);
+  d.update('ARB', 100, 0);
+  const first = d.update('ARB', 108, 1 * MIN);
+  assert.ok(d.accept(first));
+  let again = null;
+  for (let m = 2; m <= 45; m++) again = d.update('ARB', 108, m * MIN) ?? again;
+  assert.ok(again, '1시간 규칙은 계속 만족한다');
+  assert.equal(d.accept(again), false, '같은 급등을 두 번 알리지 않는다');
+
+  // 대기 시간 0이어도 매 주기 반복해서 알리지 않는다.
+  const zero = detector('5m:3', 0);
+  zero.update('OP', 100, 0);
+  assert.ok(zero.accept(zero.update('OP', 104, 1 * MIN)));
+  assert.equal(zero.accept(zero.update('OP', 104.5, 1.25 * MIN)), false);
+  const more = zero.update('OP', 107.5, 1.5 * MIN);
+  assert.ok(zero.accept(more));
+  assert.equal(more.repeat, true);
+});
+
+test('직전 알림의 저점보다 더 낮은 새 저점에서 다시 오르면 대기 중이라도 새 급등으로 알린다', () => {
+  const d = detector('5m:3,30m:7', 30);
+  d.update('X', 100, 0);
+  assert.ok(d.accept(d.update('X', 110, 1 * MIN)));
+  // 95까지 밀렸다가 4분 만에 112로 급등: 저점 95는 직전 저점 100보다 3% 넘게 낮다.
+  d.update('X', 95, 12 * MIN);
+  d.update('X', 95, 15 * MIN);
+  const fresh = d.update('X', 112, 16 * MIN);
+  assert.ok(fresh);
+  assert.ok(d.accept(fresh));
+  assert.equal(fresh.repeat, false);
+
+  // 살짝 눌렸다가(99) 다시 오르는 건 새 급등이 아니다: 직전 알림가(103.5)보다 3% 더 올라야 한다.
+  const e = detector('5m:3', 30);
+  e.update('Y', 100, 0);
+  assert.ok(e.accept(e.update('Y', 103.5, 1 * MIN)));
+  e.update('Y', 99, 4 * MIN);
+  const dip = e.update('Y', 103.5, 7 * MIN);
+  assert.ok(dip);
+  assert.equal(e.accept(dip), false);
+});
+
+test('시계가 뒤로 돌아가면 기록을 비우고 새로 쌓는다', () => {
+  const d = detector('5m:3', 30);
+  d.update('Z', 100, 10 * MIN);
+  d.update('Z', 101, 11 * MIN);
+  // NTP 보정으로 3분 뒤로 간 뒤의 상승은 이전 기록과 비교하지 않는다.
+  assert.equal(d.update('Z', 104, 8 * MIN), null);
+  assert.equal(d.history.get('Z').length, 1);
+});

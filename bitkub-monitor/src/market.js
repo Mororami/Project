@@ -17,14 +17,21 @@ export function median(values) {
 /**
  * Bitkub·Bithumb 시세와 환율을 합쳐 두 거래소에 모두 있는 코인의 비교 스냅샷을 만든다.
  * - outlier: |김프|가 outlierPct 이상. 같은 티커의 다른 코인이거나 입출금 중단일 가능성이 커서 요약 통계에서 뺀다.
- * - lowLiquidity: Bitkub 24시간 거래대금이 lowLiquidityThb 미만. 마지막 체결가가 오래됐을 수 있다.
+ * - lowLiquidity: Bitkub 24시간 거래대금이 lowLiquidityThb 미만이거나 Bithumb 24시간 거래대금이 lowLiquidityKrw 미만.
+ *   마지막 체결가가 오래됐을 수 있어 요약 통계에서 뺀다.
+ * - halted: Bitkub에서 매수나 매도가 정지된 코인. 요약 통계에서 뺀다.
+ * - bitkubOnly: Bithumb에 KRW 마켓이 없어 비교하지 못한 Bitkub 코인.
  */
 export function buildSnapshot({ bitkub, bithumb, bitkubSymbols, bithumbMarkets, fx, options, now = Date.now() }) {
   const rate = fx?.rate ?? null;
   const rows = [];
+  const bitkubOnly = [];
   for (const [base, bk] of bitkub) {
     const bh = bithumb.get(base);
-    if (!bh) continue;
+    if (!bh) {
+      bitkubOnly.push(base);
+      continue;
+    }
     const market = bithumbMarkets.get(base);
     const premium = premiumPct(bh.last, bk.last, rate);
     rows.push({
@@ -32,11 +39,12 @@ export function buildSnapshot({ bitkub, bithumb, bitkubSymbols, bithumbMarkets, 
       nameKo: market?.nameKo ?? null,
       nameEn: market?.nameEn ?? bitkubSymbols.get(base)?.name ?? null,
       warning: market?.warning ?? null,
+      halted: bitkubSymbols.get(base)?.halted === true,
       bitkub: bk,
       bithumb: bh,
       krwFromThb: rate ? bk.last * rate : null,
       premiumPct: premium,
-      lowLiquidity: bk.volumeThb < options.lowLiquidityThb,
+      lowLiquidity: bk.volumeThb < options.lowLiquidityThb || bh.volumeKrw < (options.lowLiquidityKrw ?? 0),
       outlier: premium != null && Math.abs(premium) >= options.outlierPct,
     });
   }
@@ -50,13 +58,15 @@ export function buildSnapshot({ bitkub, bithumb, bitkubSymbols, bithumbMarkets, 
     // 스테이블코인으로 본 환율. 은행 환율과의 차이가 곧 USDT 프리미엄이다.
     usdtCrossRate: usdtBk && usdtBh ? usdtBh.last / usdtBk.last : null,
     rows,
+    bitkubCount: bitkub.size,
+    bitkubOnly,
     summary: summarize(rows),
   };
 }
 
-/** 이상치와 저유동성 코인을 뺀 요약 */
+/** 이상치·저유동성·거래정지 코인을 뺀 요약 */
 export function summarize(rows) {
-  const valid = rows.filter((r) => r.premiumPct != null && !r.outlier && !r.lowLiquidity);
+  const valid = rows.filter((r) => r.premiumPct != null && !r.outlier && !r.lowLiquidity && !r.halted);
   const pick = (base) => rows.find((r) => r.base === base)?.premiumPct ?? null;
   return {
     count: rows.length,
