@@ -1,0 +1,16 @@
+{
+  "name": "bitkub-monitor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Bitkub 시세·급등 Telegram 알림과 Bitkub-Bithumb 김치 프리미엄 대시보드",
+  "type": "module",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test",
+    "telegram:chat-id": "node src/tools/chat-id.js",
+    "telegram:test": "node src/tools/telegram-check.js"
+  }
+}
