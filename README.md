@@ -1,5 +1,7 @@
 # Bithumb MCP · CLI · Skill 설정
 
+> **Bitkub 시세 알림 · 김치 프리미엄 대시보드**는 [`bitkub-monitor/`](bitkub-monitor/README.md)에 있습니다. Bitkub 시세를 원화로 환산해 급등·정기 시세를 Telegram으로 보내고, Bithumb 가격과 비교한 김프를 대시보드로 보여줍니다. API 키 없이 공개 시세만 사용합니다.
+
 이 저장소는 [Bithumb MCP 서버](https://github.com/bithumb-official/bithumb-ai-trade-kit/blob/main/setup-mcp.md)와 [Bithumb CLI · Skill](https://github.com/bithumb-official/bithumb-ai-trade-kit/blob/main/setup-cli-skills.md)을 Claude Code에서 사용할 수 있도록 설정되어 있습니다.
 
 ## 구성 파일
