@@ -20,16 +20,18 @@ export function median(values) {
  * - lowLiquidity: Bitkub 24시간 거래대금이 lowLiquidityThb 미만이거나 Bithumb 24시간 거래대금이 lowLiquidityKrw 미만.
  *   마지막 체결가가 오래됐을 수 있어 요약 통계에서 뺀다.
  * - halted: Bitkub에서 매수나 매도가 정지된 코인. 요약 통계에서 뺀다.
- * - bitkubOnly: Bithumb에 KRW 마켓이 없어 비교하지 못한 Bitkub 코인.
+ * - bitkubOnly: Bithumb에 KRW 마켓이 없어 비교하지 못한 Bitkub 코인 (마켓은 있는데 시세를 못 받은 코인은 어디에도 넣지 않는다).
  */
 export function buildSnapshot({ bitkub, bithumb, bitkubSymbols, bithumbMarkets, fx, options, now = Date.now() }) {
   const rate = fx?.rate ?? null;
   const rows = [];
   const bitkubOnly = [];
+  // Bithumb 시세를 아예 못 받은 상태에서는 "Bithumb에 없는 코인"을 가릴 수 없다.
+  const bithumbKnown = bithumb.size > 0 && bithumbMarkets.size > 0;
   for (const [base, bk] of bitkub) {
     const bh = bithumb.get(base);
     if (!bh) {
-      bitkubOnly.push(base);
+      if (bithumbKnown && !bithumbMarkets.has(base)) bitkubOnly.push(base);
       continue;
     }
     const market = bithumbMarkets.get(base);

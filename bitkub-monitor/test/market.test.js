@@ -91,3 +91,21 @@ test('중앙값', () => {
   assert.equal(median([3, 1, 2]), 2);
   assert.equal(median([4, 1, 3, 2]), 2.5);
 });
+
+test('Bithumb 시세를 못 받은 상태에서는 코인을 "Bithumb에 없는 코인"으로 분류하지 않는다', () => {
+  const bitkub = new Map([['BTC', { last: 1, changePct: 0, volumeThb: 1 }], ['KUB', { last: 1, changePct: 0, volumeThb: 1 }]]);
+  const bithumbMarkets = new Map([['BTC', { nameKo: '비트코인', nameEn: 'Bitcoin', warning: null }]]);
+  const empty = buildSnapshot({ bitkub, bithumb: new Map(), bitkubSymbols: new Map(), bithumbMarkets, fx: null, options, now: 1 });
+  assert.deepEqual(empty.rows, []);
+  assert.deepEqual(empty.bitkubOnly, []);
+  // 시세는 있는데 특정 마켓(BTC)만 거절당한 경우: BTC는 어느 쪽에도 넣지 않고 KUB만 Bithumb에 없는 코인이다.
+  const partial = buildSnapshot({
+    bitkub: new Map([...bitkub, ['ETH', { last: 1, changePct: 0, volumeThb: 1 }]]),
+    bithumb: new Map([['ETH', { last: 40, changePct: 0, volumeKrw: 1e9 }]]),
+    bitkubSymbols: new Map(),
+    bithumbMarkets: new Map([...bithumbMarkets, ['ETH', { nameKo: '이더리움', nameEn: 'Ethereum', warning: null }]]),
+    fx: null, options, now: 1,
+  });
+  assert.deepEqual(partial.rows.map((r) => r.base), ['ETH']);
+  assert.deepEqual(partial.bitkubOnly, ['KUB']);
+});

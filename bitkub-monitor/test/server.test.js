@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import http from 'node:http';
 import { test } from 'node:test';
 import { createServer } from '../src/server.js';
 
@@ -55,5 +56,20 @@ test('내부 오류는 경로 같은 세부 정보를 응답에 싣지 않는다
     assert.equal(await res.text(), 'Internal Error');
     assert.equal(errors.length, 1);
     assert.match(errors[0], /nonexistent/);
+  });
+});
+
+test('잘못된 URL은 400으로 응답하고 오류 로그를 남기지 않는다', async () => {
+  const errors = [];
+  await withServer({ publicDir: '/tmp', getSnapshot: () => null, log: { ...silent, error: (m) => errors.push(m) } }, async (base) => {
+    const { port } = new URL(base);
+    const res = await new Promise((resolve, reject) => {
+      http.request({ host: '127.0.0.1', port, path: 'http://[::1', method: 'GET' }, resolve).on('error', reject).end();
+    });
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.headers['x-content-type-options'], 'nosniff');
+    res.resume();
+    await new Promise((r) => res.on('end', r));
+    assert.deepEqual(errors, []);
   });
 });

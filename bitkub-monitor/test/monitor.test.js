@@ -6,7 +6,7 @@ import { Monitor } from '../src/monitor.js';
 const silent = { info() {}, warn() {}, error() {} };
 
 function setup(env = {}) {
-  const prices = { bitkub: { BTC: 2_500_000, ETH: 80_000 }, volume: { BTC: 1e9, ETH: 1e9 }, fail: {}, requested: [] };
+  const prices = { bitkub: { BTC: 2_500_000, ETH: 80_000 }, volume: { BTC: 1e9, ETH: 1e9 }, book: {}, fail: {}, requested: [] };
   const sources = {
     async bitkubSymbols() {
       if (prices.fail.bitkubSymbols) throw new Error('symbols down');
@@ -17,7 +17,8 @@ function setup(env = {}) {
     },
     async bitkubTickers() {
       if (prices.fail.bitkub) throw new Error('bitkub down');
-      return new Map(Object.entries(prices.bitkub).map(([b, last]) => [b, { last, changePct: 0, volumeThb: prices.volume[b] ?? 1e9 }]));
+      // 호가는 기본적으로 체결가를 중심으로 대칭이라 중간값 = 체결가다.
+      return new Map(Object.entries(prices.bitkub).map(([b, last]) => [b, { last, bid: prices.book[b]?.bid ?? last - 100, ask: prices.book[b]?.ask ?? last + 100, changePct: 0, volumeThb: prices.volume[b] ?? 1e9 }]));
     },
     async bithumbTickers(bases, { onSkip } = {}) {
       if (prices.fail.bithumb) throw new Error('bithumb down');
@@ -118,6 +119,9 @@ test('Bithumb가 거절한 마켓은 다음 목록 갱신까지 요청에서 뺀
   assert.deepEqual([...monitor.bithumbSkipped], ['ETH']);
   await monitor.tick();
   assert.deepEqual(prices.requested[1], ['BTC']);
+  // 주기 안의 목록 재시도는 거절 목록을 지우지 않는다. 정기(1시간) 갱신만 지운다.
+  await monitor.refreshMeta({ resetSkipped: false });
+  assert.deepEqual([...monitor.bithumbSkipped], ['ETH']);
   await monitor.refreshMeta();
   await monitor.tick();
   assert.deepEqual(prices.requested[2], ['BTC', 'ETH']);
@@ -146,14 +150,34 @@ test('시세 갱신이 실패하면 스냅샷 시각이 멈추고 메시지에 �
   prices.fail.bithumb = false;
   prices.fail.fx = false;
   await monitor.refreshFx();
+  await new Promise((r) => setTimeout(r, 5)); // Date.now()가 반드시 앞으로 가도록
   await monitor.tick();
   await monitor.sendReport();
   assert.doesNotMatch(sent[2], /갱신 실패/);
   assert.ok(monitor.publicSnapshot().updatedAt > okAt);
 
+  const lastOkBefore = monitor.status.bitkub.lastOkAt;
+  const staleMs = Math.max(60_000, monitor.config.pollIntervalMs * 4);
   prices.fail.bitkub = true;
   await monitor.tick();
-  assert.equal(monitor.health(Date.now() + 10 * 60_000).ok, false, 'Bitkub 시세가 오래 끊기면 실패다');
+  assert.equal(monitor.status.bitkub.ok, false);
+  assert.equal(monitor.status.bitkub.lastOkAt, lastOkBefore, '실패한 주기는 lastOkAt을 당기지 않는다');
+  assert.equal(monitor.health().ok, true, '아직 신선하다');
+  assert.equal(monitor.health(lastOkBefore + staleMs).ok, true);
+  assert.equal(monitor.health(lastOkBefore + staleMs + 1).ok, false, 'Bitkub 시세가 오래 끊기면 실패다');
+});
+
+test('한 번도 성공하지 못한 소스는 스냅샷 시각 계산에서 뺀다', async () => {
+  const { monitor, prices } = setup();
+  prices.fail.bithumb = true;
+  await monitor.prime();
+  const first = monitor.publicSnapshot().updatedAt;
+  assert.ok(first > 0);
+  prices.fail.bitkub = true;
+  await new Promise((r) => setTimeout(r, 5));
+  await monitor.tick();
+  assert.equal(monitor.publicSnapshot().updatedAt, first, '둘 다 실패하면 이전 시각을 유지한다');
+  assert.equal(monitor.publicSnapshot().status.bithumb.error, 'bithumb down');
 });
 
 test('Bitkub 코인 목록이 실패해도 Bithumb 요청은 시세 목록으로 만들고 상태에 남긴다', async () => {
@@ -184,7 +208,10 @@ test('시작 경고: 없는 심볼과 거래대금 기준에 걸리는 WATCHLIST
   assert.match(warnings[0], /없는 심볼: XYZ, NOPE/);
   assert.match(warnings[1], /급등 알림에서 제외: BTC/);
   assert.match(warnings[2], /사실상 꺼져/);
-  assert.deepEqual(setup().monitor.startupWarnings(), []);
+  assert.deepEqual(setup().monitor.startupWarnings(), [], 'Bitkub 시세가 없으면 확인할 수 없다');
+  const ok = setup({ REPORT_SYMBOLS: 'BTC,ETH,top:5' });
+  await ok.monitor.prime();
+  assert.deepEqual(ok.monitor.startupWarnings(), [], '선택자는 심볼로 보지 않는다');
 });
 
 test('Telegram 전송 실패는 상태에 남고 다음 알림은 계속 보낸다', async () => {
@@ -198,4 +225,66 @@ test('Telegram 전송 실패는 상태에 남고 다음 알림은 계속 보낸�
   await monitor.sendReport();
   assert.equal(sent.length, 1);
   assert.equal(monitor.publicSnapshot().status.telegram.ok, true);
+});
+
+test('급등 판정은 호가 중간값으로 한다 (체결가 튐은 거르고, 호가가 같이 오르면 잡는다)', async () => {
+  const a = setup();
+  await a.monitor.prime();
+  a.prices.book.ETH = { bid: 79_920, ask: 80_080 }; // 호가는 그대로, 체결가만 튐
+  a.prices.bitkub.ETH = 83_000;
+  await a.monitor.tick();
+  await a.monitor.flushNotifications();
+  assert.equal(a.sent.length, 0);
+
+  const b = setup();
+  await b.monitor.prime();
+  b.prices.book.ETH = { bid: 83_000, ask: 83_400 };
+  b.prices.bitkub.ETH = 83_000;
+  await b.monitor.tick();
+  await b.monitor.flushNotifications();
+  assert.equal(b.sent.length, 1);
+  assert.equal(b.monitor.recentAlerts[0].price, 83_200);
+  assert.match(b.sent[0], /현재 ฿83,200/);
+
+  // 호가가 없으면 체결가로 판정한다.
+  const c = setup();
+  await c.monitor.prime();
+  c.prices.book.ETH = { bid: 0, ask: 0 };
+  c.prices.bitkub.ETH = 83_000;
+  await c.monitor.tick();
+  await c.monitor.flushNotifications();
+  assert.equal(c.sent.length, 1);
+});
+
+test('알림 전송은 시세 조회를 막지 않고, 순서대로 보내며, 실패해도 다음 알림을 이어 보낸다', async () => {
+  const { monitor, prices } = setup();
+  await monitor.prime();
+  const pending = [];
+  monitor.telegram = { enabled: true, send(html) { return new Promise((res, rej) => pending.push({ html, res, rej })); } };
+  prices.bitkub.ETH = 83_000;
+  const outcome = await Promise.race([monitor.tick().then(() => 'done'), new Promise((r) => setTimeout(() => r('blocked'), 300))]);
+  assert.equal(outcome, 'done', '전송이 끝나기 전에 주기가 끝난다');
+  await new Promise((r) => setImmediate(r));
+  assert.equal(pending.length, 1);
+  const report = monitor.sendReport();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(pending.length, 1, '앞 알림이 끝나기 전에는 다음 알림을 보내지 않는다');
+  pending[0].rej(new Error('boom'));
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(pending.length, 2, '실패해도 다음 알림을 이어 보낸다');
+  assert.match(pending[0].html, /급등 알림/);
+  assert.match(pending[1].html, /\[시세\] Bitkub/);
+  assert.equal(monitor.status.telegram.ok, false);
+  pending[1].res();
+  await report;
+  assert.equal(monitor.status.telegram.ok, true);
+});
+
+test('많이 늦어진 알림에는 감지 당시 값임을 표시한다', async () => {
+  const { monitor, sent } = setup({ POLL_INTERVAL_SEC: '3' });
+  await monitor.prime();
+  await monitor.deliver('<b>x</b>', '급등 알림', Date.now() - 61_000);
+  assert.match(sent[0], /^<i>전송 1분 1초 지연 \(감지 당시 값\)<\/i>\n\n<b>x<\/b>$/);
+  await monitor.deliver('<b>y</b>', '급등 알림', Date.now() - 5_000);
+  assert.equal(sent[1], '<b>y</b>');
 });

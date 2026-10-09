@@ -31,9 +31,16 @@ export async function fetchBithumbTickers(bases, { onSkip } = {}) {
   const chunks = [];
   for (let i = 0; i < markets.length; i += CHUNK_SIZE) chunks.push(markets.slice(i, i + CHUNK_SIZE));
 
-  const results = await Promise.all(chunks.map((chunk) => fetchChunk(chunk, onSkip)));
+  const skipped = [];
+  const results = await Promise.all(chunks.map((chunk) => fetchChunk(chunk, skipped)));
+  const list = results.flat();
+  // 요청한 마켓이 하나도 안 돌아오면 마켓 문제가 아니라 엔드포인트 문제다. 전부 제외하지 않고 실패로 올린다.
+  if (!list.length && skipped.length) {
+    throw new Error(`Bithumb가 요청한 마켓 ${markets.length}개의 시세를 모두 거절했습니다 (${skipped[0].why})`);
+  }
+  for (const s of skipped) onSkip?.(s.market, s.why);
   const tickers = new Map();
-  for (const t of results.flat()) {
+  for (const t of list) {
     const last = Number(t.trade_price);
     if (!(last > 0)) continue;
     tickers.set(String(t.market).slice(4), {
@@ -46,23 +53,27 @@ export async function fetchBithumbTickers(bases, { onSkip } = {}) {
   return tickers;
 }
 
-async function fetchChunk(markets, onSkip) {
+/** 묶음 하나를 받는다. 거절된 마켓은 skipped에 모은다. */
+async function fetchChunk(markets, skipped) {
   if (!markets.length) return [];
   let data;
   try {
     data = await fetchJson(`${BASE_URL}/v1/ticker?markets=${markets.join(',')}`);
   } catch (err) {
-    // 모르는 마켓이 섞이면 HTTP 400/404와 {error:{name,message}}로 거절한다. 그 경우만 나눠서 다시 묻는다.
-    // 한도 초과(429)·서버 장애·네트워크 오류는 나눠 봐야 요청만 늘어나므로 그대로 올린다.
-    if (err.status !== 400 && err.status !== 404) throw err;
-    data = err.body ?? { error: { message: `HTTP ${err.status}` } };
+    // 모르는 마켓이 섞이면 HTTP 400/404와 JSON {error:{name,message}}로 묶음 전체를 거절한다. 그 형식일 때만 나눠서 다시 묻는다.
+    // HTML 오류 페이지, 한도 초과(429), 서버 장애, 네트워크 오류는 나눠 봐야 요청만 늘어나므로 그대로 올린다.
+    const perMarket = (err.status === 400 || err.status === 404) && err.body?.error != null && typeof err.body.error === 'object';
+    if (!perMarket) throw err;
+    data = err.body;
   }
   if (Array.isArray(data)) return data;
   if (markets.length === 1) {
-    onSkip?.(markets[0], data?.error?.message ?? '알 수 없는 응답');
+    skipped.push({ market: markets[0], why: data?.error?.message ?? '알 수 없는 응답' });
     return [];
   }
+  // 반씩 차례로 묻는다. 동시에 묻지 않아 요청이 한꺼번에 몰리지 않는다.
   const mid = Math.ceil(markets.length / 2);
-  const [a, b] = await Promise.all([fetchChunk(markets.slice(0, mid), onSkip), fetchChunk(markets.slice(mid), onSkip)]);
+  const a = await fetchChunk(markets.slice(0, mid), skipped);
+  const b = await fetchChunk(markets.slice(mid), skipped);
   return [...a, ...b];
 }

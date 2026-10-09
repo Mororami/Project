@@ -94,7 +94,8 @@ export class Monitor {
     this.status[source] = { ok: false, lastOkAt: prev?.lastOkAt ?? null, error: err.message };
   }
 
-  async refreshMeta() {
+  /** 코인·마켓 목록을 새로 받는다. resetSkipped가 참이면 Bithumb가 거절했던 마켓도 다시 시도한다. */
+  async refreshMeta({ resetSkipped = true } = {}) {
     const [symbols, markets] = await Promise.allSettled([this.sources.bitkubSymbols(), this.sources.bithumbMarkets()]);
     if (symbols.status === 'fulfilled') {
       this.bitkubSymbols = symbols.value;
@@ -104,7 +105,7 @@ export class Monitor {
     }
     if (markets.status === 'fulfilled') {
       this.bithumbMarkets = markets.value;
-      this.bithumbSkipped.clear();
+      if (resetSkipped) this.bithumbSkipped.clear();
       this.markOk('bithumbMarkets');
     } else {
       this.markError('bithumbMarkets', markets.reason);
@@ -129,8 +130,8 @@ export class Monitor {
 
   async tick() {
     const now = Date.now();
-    // 목록을 아직 못 받았으면 한 시간 주기를 기다리지 않고 매 주기 다시 시도한다.
-    if (!this.bithumbMarkets.size || !this.bitkubSymbols.size) await this.refreshMeta();
+    // 목록을 아직 못 받았으면 한 시간 주기를 기다리지 않고 매 주기 다시 시도한다 (거절 마켓 목록은 그대로 둔다).
+    if (!this.bithumbMarkets.size || !this.bitkubSymbols.size) await this.refreshMeta({ resetSkipped: false });
 
     const bkPromise = this.sources.bitkubTickers();
     // Bitkub 목록에 있는 코인만 Bithumb에 요청한다. 코인 목록도 이전 시세도 없는 첫 주기에는
@@ -141,16 +142,20 @@ export class Monitor {
       if (first.status === 'fulfilled') for (const b of first.value.keys()) known.add(b);
     }
     // Bithumb가 거절한 마켓은 목록을 새로 받을 때까지 뺀다.
-    const bases = [...this.bithumbMarkets.keys()].filter((b) => known.has(b) && !this.bithumbSkipped.has(b));
+    const overlap = [...this.bithumbMarkets.keys()].filter((b) => known.has(b));
+    const bases = overlap.filter((b) => !this.bithumbSkipped.has(b));
     const onSkip = (market, why) => {
       this.bithumbSkipped.add(market.replace(/^KRW-/, ''));
       this.log.warn(`Bithumb ${market} 제외 (다음 마켓 목록 갱신까지): ${why}`);
     };
+    const noBases = () => {
+      if (!this.bithumbMarkets.size) return 'Bithumb 마켓 목록이 없습니다';
+      if (overlap.length) return `Bitkub과 겹치는 Bithumb 마켓 ${overlap.length}개가 모두 제외되어 있습니다`;
+      return 'Bitkub과 겹치는 Bithumb 마켓이 없습니다';
+    };
     const [bk, bh] = await Promise.allSettled([
       bkPromise,
-      bases.length
-        ? this.sources.bithumbTickers(bases, { onSkip })
-        : Promise.reject(new Error(this.bithumbMarkets.size ? 'Bitkub과 겹치는 Bithumb 마켓이 없습니다' : 'Bithumb 마켓 목록이 없습니다')),
+      bases.length ? this.sources.bithumbTickers(bases, { onSkip }) : Promise.reject(new Error(noBases())),
     ]);
 
     if (bk.status === 'fulfilled') {
@@ -167,8 +172,10 @@ export class Monitor {
     }
 
     // 김프는 두 거래소 시세 중 오래된 쪽만큼만 최신이다. 실패한 주기에는 갱신 시각을 앞으로 당기지 않는다.
-    const okAt = (s) => this.status[s]?.lastOkAt ?? 0;
-    const pricesAt = Math.min(okAt('bitkub'), okAt('bithumb')) || now;
+    // 한 번도 성공하지 못한 소스는 빼고 본다. 둘 다 없으면 이전 스냅샷 시각을 유지한다.
+    const okAt = (s) => this.status[s]?.lastOkAt ?? Infinity;
+    const oldest = Math.min(okAt('bitkub'), okAt('bithumb'));
+    const pricesAt = Number.isFinite(oldest) ? oldest : (this.snapshot?.updatedAt ?? now);
     this.snapshot = buildSnapshot({
       bitkub: this.bitkub,
       bithumb: this.bithumb,
@@ -311,22 +318,29 @@ export class Monitor {
 
   /** 알림을 순서대로 보낸다. 기다리지 않아도 되며, 결과는 status.telegram과 로그에 남는다. */
   notify(html, kind) {
-    const run = () => this.deliver(html, kind);
+    const at = Date.now();
+    const run = () => this.deliver(html, kind, at);
     this.sendQueue = this.sendQueue.then(run, run);
     return this.sendQueue;
   }
 
-  async deliver(html, kind) {
+  async deliver(html, kind, at = Date.now()) {
     if (!this.telegram?.enabled) {
       this.log.info(`[Telegram 미설정 - ${kind}]\n${html.replace(/<[^>]+>/g, '')}`);
       return;
+    }
+    // 앞선 전송이 막혀 많이 늦어진 알림은 감지 당시 값임을 밝힌다.
+    const delay = Date.now() - at;
+    if (delay > Math.max(60_000, this.config.pollIntervalMs * 2)) {
+      html = `<i>전송 ${formatDuration(delay - (delay % 1000))} 지연 (감지 당시 값)</i>\n\n${html}`;
     }
     try {
       await this.telegram.send(html);
       this.markOk('telegram');
       this.log.info(`${kind} 전송 완료`);
     } catch (err) {
-      this.status.telegram = { ok: false, lastOkAt: this.status.telegram?.lastOkAt ?? null, error: err.message };
+      // 대시보드에 보이는 상태에는 채팅 ID가 없는 요약을 남긴다.
+      this.status.telegram = { ok: false, lastOkAt: this.status.telegram?.lastOkAt ?? null, error: err.summary ?? err.message };
       this.log.error(`${kind} 전송 실패: ${err.message}`);
     }
   }

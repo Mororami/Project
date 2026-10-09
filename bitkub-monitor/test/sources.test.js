@@ -162,3 +162,37 @@ test('환율: 앞 소스가 실패하면 다음 소스를 쓰고, 범위를 벗�
     g.restore();
   }
 });
+
+test('Bithumb ticker: JSON 거절 형식이 아닌 4xx(HTML 오류 페이지)·네트워크 오류는 나누지 않고 실패한다', async () => {
+  const bases = Array.from({ length: 100 }, (_, i) => `C${i}`);
+  const html = stubFetch(() => ({ status: 404, text: '<html><body>404 Not Found</body></html>' }));
+  const skipped = [];
+  try {
+    await assert.rejects(fetchBithumbTickers(bases, { onSkip: (m) => skipped.push(m) }), /HTTP 404: <html>/);
+    assert.equal(html.calls.length, 1, '한 번만 묻고 포기한다');
+    assert.deepEqual(skipped, []);
+  } finally {
+    html.restore();
+  }
+  const net = stubFetch(() => Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } }));
+  try {
+    await assert.rejects(fetchBithumbTickers(['BTC', 'ETH', 'XRP']), /요청 실패: ECONNRESET/);
+    assert.equal(net.calls.length, 1);
+  } finally {
+    net.restore();
+  }
+});
+
+test('Bithumb ticker: 요청한 마켓이 전부 거절되면 제외하지 않고 실패로 올린다 (엔드포인트 장애)', async () => {
+  const bases = Array.from({ length: 30 }, (_, i) => `C${i}`);
+  const f = stubFetch(() => ({ status: 404, body: { error: { name: 404, message: 'Code not found' } } }));
+  const skipped = [];
+  try {
+    await assert.rejects(fetchBithumbTickers(bases, { onSkip: (m) => skipped.push(m) }), /마켓 30개의 시세를 모두 거절했습니다 \(Code not found\)/);
+    assert.deepEqual(skipped, [], '전부 거절이면 onSkip을 부르지 않는다');
+    // 차례로 나누므로 동시에 몰리지 않는다: 30 → 15+15 → ... 단일 30개까지 모두 한 번씩, 총 2N-1 = 59
+    assert.equal(f.calls.length, 59);
+  } finally {
+    f.restore();
+  }
+});

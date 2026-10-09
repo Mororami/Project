@@ -492,7 +492,7 @@ footer p { margin: 4px 0; }
     const stats = scope.filter((d) => d.p != null && !d.outlier && !d.r.lowLiquidity && !d.r.halted);
 
     $('outlierCount').textContent = outliers.length;
-    buildHead();
+    syncHeadLabels();
     renderHeader();
     renderKpis(all, stats);
     renderHist(scope, stats);
@@ -609,6 +609,14 @@ footer p { margin: 4px 0; }
   }
   function hideTip() { $('tip').hidden = true; }
 
+  // 헤더는 다시 만들지 않고 라벨만 갱신한다 (다시 만들면 정렬 버튼의 키보드 포커스가 사라진다).
+  function syncHeadLabels() {
+    for (const [i, th] of [...$('thead').children].entries()) {
+      const c = COLUMNS[i];
+      th.firstChild.textContent = typeof c.label === 'function' ? c.label() : c.label;
+    }
+  }
+
   function buildHead() {
     $('thead').replaceChildren(...COLUMNS.map((c) => {
       const sorted = ui.sort.key === c.key;
@@ -680,12 +688,19 @@ footer p { margin: 4px 0; }
         h('td', { class: 'muted' }, d.volBk != null ? '₩' + fmtKrwC(d.volBk) : '-'),
         h('td', { class: 'muted' }, '₩' + fmtKrwC(r.bithumb.volumeKrw)));
     });
-    $('tbody').replaceChildren(...(body.length ? body : [h('tr', null, h('td', { class: 'empty', colspan: COLUMNS.length }, emptyText(q, match, all)))]));
+    $('tbody').replaceChildren(...(body.length ? body : [h('tr', null, h('td', { class: 'empty', colspan: COLUMNS.length }, emptyText(q, match, all, scope)))]));
   }
 
-  // 검색 결과가 없을 때, 필터에 가려졌는지 비교 대상이 아닌지 알려 준다.
-  function emptyText(q, match, all) {
+  // 검색 결과가 없을 때, 구간·필터에 가려졌는지, 비교 대상이 아닌지, 시세를 못 받았는지 알려 준다.
+  function emptyText(q, match, all, scope) {
+    if (!snap.rows.length && snap.status && snap.status.bithumb && snap.status.bithumb.ok === false) {
+      return 'Bithumb 시세를 아직 받지 못해 비교할 수 없습니다';
+    }
     if (q) {
+      if (ui.bin != null) {
+        const inScope = scope.filter(match).length;
+        if (inScope) return `${inScope}개가 선택한 구간(${BINS[ui.bin].label}) 밖에 있습니다. 구간을 해제하세요`;
+      }
       const hidden = all.filter(match).length;
       if (hidden) return `${hidden}개가 이상치 또는 최소 거래대금 필터에 가려져 있습니다`;
       const only = (snap.bitkubOnly || []).filter((b) => b.toLowerCase().includes(q));
@@ -729,7 +744,9 @@ footer p { margin: 4px 0; }
         : '환율 정보가 없어 원화 환산과 김프를 계산할 수 없습니다.');
     }
     if (ui.basis === 'usdt' && !usdtBasisActive()) {
-      lines.push('USDT 교차 환율을 구할 수 없어(두 거래소 USDT 시세 필요) 은행 고시 기준으로 표시 중입니다.');
+      lines.push(snap.fx
+        ? `USDT 교차 환율을 구할 수 없어(두 거래소 USDT 시세 필요) ${snap.fx.sourceLabel} 기준으로 표시 중입니다.`
+        : 'USDT 교차 환율을 구할 수 없습니다(두 거래소 USDT 시세 필요).');
     }
     const banner = $('banner');
     banner.hidden = !lines.length;

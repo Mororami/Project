@@ -56,25 +56,33 @@ export class Telegram {
     if (!this.enabled) return false;
     const parts = splitMessage(html);
     const failed = [];
+    const reasons = [];
     for (const chatId of this.chatIds) {
       try {
-        for (const part of parts) await this.sendOne(chatId, part);
+        // 보내는 중에 채팅 ID가 바뀌면(슈퍼그룹 전환) 나머지 조각은 새 ID로 보낸다.
+        let id = chatId;
+        for (const part of parts) id = await this.sendOne(id, part);
       } catch (err) {
         failed.push(`채팅 ${chatId}: ${err.message}`);
+        reasons.push(err.message);
       }
     }
     if (failed.length) {
       const err = new Error(failed.join(' / '));
       err.failedCount = failed.length;
       err.sentCount = this.chatIds.length - failed.length;
+      // 대시보드처럼 바깥에 보이는 곳에는 채팅 ID가 없는 요약을 쓴다.
+      err.summary = `${failed.length}/${this.chatIds.length} 채팅 전송 실패: ${[...new Set(reasons)].join(' / ')}`;
       throw err;
     }
     return true;
   }
 
+  /** 메시지 하나를 보내고, 실제로 보낸 chat_id를 돌려준다. */
   async sendOne(chatId, text, attempt = 1) {
     try {
       await this.call('sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true });
+      return chatId;
     } catch (err) {
       if (attempt >= MAX_ATTEMPTS) throw err;
       // 일반 그룹이 슈퍼그룹으로 바뀌면 chat_id가 바뀐다(-NNN → -100NNN). 새 ID로 보내고 이번 실행 동안 기억한다.

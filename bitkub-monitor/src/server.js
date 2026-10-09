@@ -36,7 +36,7 @@ export function createServer({ getSnapshot, getHealth = () => ({ ok: true }), pu
         return snapshot ? sendJson(res, 200, snapshot) : sendJson(res, 503, { error: '첫 시세를 수집하는 중입니다' });
       }
       if (pathname === '/healthz') {
-        // 시세가 오래 끊겼으면 503. 감시 도구가 재시작 등으로 대응할 수 있다.
+        // 시세가 오래 끊겼으면 503. 감시 도구가 알림 등으로 대응할 수 있다 (재시작해도 거래소 장애는 풀리지 않는다).
         const health = getHealth();
         return sendJson(res, health.ok ? 200 : 503, health);
       }

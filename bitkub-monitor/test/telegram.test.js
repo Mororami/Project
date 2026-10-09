@@ -27,6 +27,9 @@ test('한 채팅방이 실패해도 나머지에는 보내고 실패를 모아 �
       assert.match(err.message, /채팅 1: Telegram sendMessage 실패: Forbidden/);
       assert.equal(err.failedCount, 1);
       assert.equal(err.sentCount, 1);
+      // 바깥에 보이는 요약에는 채팅 ID가 없다.
+      assert.equal(err.summary, '1/2 채팅 전송 실패: Telegram sendMessage 실패: Forbidden: bot was blocked by the user');
+      assert.doesNotMatch(err.summary, /채팅 1/);
       return true;
     });
     assert.deepEqual(api.calls.map((c) => c.payload.chat_id), ['1', '2']);
@@ -82,6 +85,13 @@ test('그룹이 슈퍼그룹으로 바뀌면 새 chat_id로 다시 보내고 기
     assert.equal(await tg.send('x'), true);
     assert.deepEqual(api.calls.map((c) => c.payload.chat_id), ['-4123', '-1004123', '9']);
     assert.deepEqual(tg.chatIds, ['-1004123', '9']);
+
+    // 여러 조각으로 나뉜 긴 메시지도 새 ID로 한 번만 옮겨 간다.
+    api.calls.length = 0;
+    const long = make(['-4123']);
+    const block = 'y'.repeat(3000);
+    assert.equal(await long.send(`${block}\n\n${block}\n\n${block}`), true);
+    assert.deepEqual(api.calls.map((c) => c.payload.chat_id), ['-4123', '-1004123', '-1004123', '-1004123']);
   } finally {
     console.warn = original;
     api.restore();
@@ -98,5 +108,25 @@ test('오류 메시지에 봇 토큰이 들어가지 않는다', async () => {
     });
   } finally {
     api.restore();
+  }
+});
+
+test('세 번 실패하면 포기하고, 429 대기는 60초를 넘지 않는다', async () => {
+  sleeps.length = 0;
+  const down = stubBotApi(() => ({ status: 502, body: { ok: false, description: 'Bad Gateway' } }));
+  try {
+    await assert.rejects(make(['7']).send('x'), /Bad Gateway/);
+    assert.equal(down.calls.length, 3);
+    assert.deepEqual(sleeps, [2000, 4000]);
+  } finally {
+    down.restore();
+  }
+  sleeps.length = 0;
+  const slow = stubBotApi((m, p, n) => (n === 1 ? { status: 429, body: { ok: false, description: 'Too Many Requests', parameters: { retry_after: 3600 } } } : {}));
+  try {
+    assert.equal(await make(['7']).send('x'), true);
+    assert.deepEqual(sleeps, [60_000]);
+  } finally {
+    slow.restore();
   }
 });

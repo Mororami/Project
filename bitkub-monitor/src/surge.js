@@ -41,7 +41,8 @@ export class SurgeDetector {
    * 알림을 보낼지 결정하고, 보낸다면 이력에 남긴다.
    * - 직전 알림이 있고 대기 시간 안이거나, 모든 규칙의 저점이 직전 알림보다 앞에 있으면(같은 상승의 연장)
    *   직전 알림 가격보다 (가장 작은 규칙 %)만큼 더 올랐을 때만 "추가 상승"으로 다시 알린다.
-   * - 직전 알림 뒤에 생긴, 직전 알림 저점보다 그만큼 더 낮은 저점에서 다시 오르면 새 급등으로 본다.
+   * - 직전 알림 뒤에 생긴, 직전 알림 저점보다 그만큼 더 낮은 저점에서 다시 올라 직전 저점 위로 회복하면 새 급등으로 본다
+   *   (하락 중의 반등은 직전 저점을 넘지 못하므로 알리지 않는다).
    */
   accept(event) {
     const last = this.lastAlert.get(event.base);
@@ -50,7 +51,8 @@ export class SurgeDetector {
     if (last) {
       const coolingDown = event.t - last.t < this.cooldownMs;
       const sameSurge = event.hits.every((h) => h.low.t <= last.t);
-      const newLeg = event.hits.every((h) => h.low.t > last.t) && lowP < last.low * (1 - this.minPct / 100);
+      const newLeg =
+        event.hits.every((h) => h.low.t > last.t) && lowP < last.low * (1 - this.minPct / 100) && event.price > last.low;
       repeat = (coolingDown || sameSurge) && !newLeg;
       if (repeat && event.price < last.p * (1 + this.minPct / 100)) return false;
     }

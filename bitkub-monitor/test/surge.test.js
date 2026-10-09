@@ -131,3 +131,22 @@ test('시계가 뒤로 돌아가면 기록을 비우고 새로 쌓는다', () =>
   assert.equal(d.update('Z', 104, 8 * MIN), null);
   assert.equal(d.history.get('Z').length, 1);
 });
+
+test('하락 중의 반등은 직전 저점을 넘지 못하므로 새 급등으로 알리지 않는다', () => {
+  const d = detector('5m:3,30m:7', 30);
+  d.update('DUMP', 100, 0);
+  assert.ok(d.accept(d.update('DUMP', 110, 1 * MIN)));
+  // 8% 떨어졌다가 3.5% 반등하는 계단식 하락
+  let price = 110;
+  let t = 2;
+  let alerts = 0;
+  for (let leg = 0; leg < 5; leg++) {
+    price *= 0.92;
+    for (let i = 0; i < 3; i++) d.update('DUMP', price, t++ * MIN);
+    price *= 1.035;
+    const e = d.update('DUMP', price, t++ * MIN);
+    if (e && d.accept(e)) alerts++;
+  }
+  assert.equal(alerts, 0);
+  assert.ok(price < 100);
+});
